@@ -1147,12 +1147,36 @@ namespace ldapcp
                 if (directory == null) return;
                 using (new SPMonitoredScope(String.Format("[{0}] Getting AD group membership of user {1} in {2}", ProviderInternalName, requestInfo.IncomingEntity.Value, directory.Path), 2000))
                 {
+                    PrincipalContext principalContext = null;
+                    PrincipalSearcher pS = null;
                     try
                     {
                         string directoryDomainName, directoryDomainFqdn;
                         RequestInformation.GetDomainInformation(directory, out directoryDomainName, out directoryDomainFqdn);
-                        PrincipalContext principalContext = new PrincipalContext(ContextType.Domain, directoryDomainFqdn);
-                        UserPrincipal adUser = UserPrincipal.FindByIdentity(principalContext, requestInfo.IncomingEntity.Value);
+                        UserPrincipal adUser;
+                        principalContext = new PrincipalContext(ContextType.Domain, directoryDomainFqdn);
+
+                        if (requestInfo.Attribute.LDAPAttribute == "mail")
+                        {
+                            LdapcpLogging.Log(String.Format("[{0}] Domain {1} querying using email address for user {2}", ProviderInternalName, directoryDomainFqdn, requestInfo.IncomingEntity.Value),
+                                TraceSeverity.Verbose, EventSeverity.Information, LdapcpLogging.Categories.Augmentation);
+
+                            adUser = new UserPrincipal(principalContext);
+                            adUser.EmailAddress = requestInfo.IncomingEntity.Value;
+
+                            // create a principal searcher for running a search operation
+                            pS = new PrincipalSearcher(adUser);
+
+                            // run the query
+                            adUser = (UserPrincipal)pS.FindOne();
+                        }
+                        else
+                        {
+                            LdapcpLogging.Log(String.Format("[{0}] Domain {1} querying using {2} for user {3}", ProviderInternalName, directoryDomainFqdn, requestInfo.Attribute.LDAPAttribute, requestInfo.IncomingEntity.Value),
+                                TraceSeverity.Verbose, EventSeverity.Information, LdapcpLogging.Categories.Augmentation);
+
+                            adUser = UserPrincipal.FindByIdentity(principalContext, requestInfo.IncomingEntity.Value);
+                        }
                         if (adUser == null) return;
                         lock (lockResults)
                         {
@@ -1181,7 +1205,16 @@ namespace ldapcp
                     {
                         LdapcpLogging.LogException(ProviderInternalName, String.Format("while getting group membership of user {0} in {1}", requestInfo.IncomingEntity.Value, directory.Path), LdapcpLogging.Categories.Augmentation, ex);
                     }
-                    finally { }
+                    finally {
+                        if (principalContext != null)
+                        {
+                            principalContext.Dispose();
+                        }
+                        if (pS != null)
+                        {
+                            pS.Dispose();
+                        }
+                    }
                 }
             });
             stopWatch.Stop();
